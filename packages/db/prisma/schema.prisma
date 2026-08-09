@@ -22,20 +22,23 @@ model User{
 }
 
 model Stream{
-  id        String        @id    @default(uuid())
-  type      StreamType
-  active    Boolean       @default(true)
-  upvote    Upvote[]
-  userId    String
-  user      User          @relation(fields: [userId], references: [id])
+  id          String        @id    @default(uuid())
+  type        StreamType
+  active      Boolean       @default(true)
+  upvote      Upvote[]
+  userId      String
+  url         String
+  extractedId String
+  title       String         @default("")
+  smallImg    String         @default("")
+  bigImg      String         @default("")  
+  user      User             @relation(fields: [userId], references: [id])
 }
 
 model Upvote{
   id            String        @id     @default(uuid())
   userId        String
   streamId      String
-  url           String
-  extractedId   String
   user          User          @relation(fields: [userId], references: [id])
   stream        Stream        @relation(fields: [streamId], references: [id])
   @@unique([userId, streamId])
