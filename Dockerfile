@@ -25,7 +25,7 @@ COPY --from=pruner /app/out/full/ .
 RUN cd packages/db && pnpm exec prisma generate
 
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm --filter web build
+RUN pnpm --filter web run build
 
 
 FROM base AS runner
