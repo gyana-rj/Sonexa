@@ -12,7 +12,7 @@ RUN turbo prune --scope=web --docker
 
 
 FROM base AS builder
-RUN apk add --no-cache libc6-compact
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY --from=pruner /app/out/json/ .
