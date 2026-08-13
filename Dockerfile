@@ -4,7 +4,7 @@ ENV PATH="$PNPM_HOMEL:$PATH"
 RUN corepack enable
 
 FROM base AS pruner
-RUN apk add --no-cache libc6-compact
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 RUN pnpm add -g turbo
 COPY . .
