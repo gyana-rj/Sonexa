@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: sonexa_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: sonexa_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sonexa_network
+  
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sonexa_web
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/sonexa_db
+      - NODE_ENV=production
+    depends_on:
+      - postgres
+    networks:
+      - sonexa_network
+    
+
+volumes:
+  postgres_data:
+
+networks:
+  sonexa_network:
+    driver: bridge
