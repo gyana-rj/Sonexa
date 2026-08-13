@@ -22,7 +22,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY --from=pruner /app/out/full/ .
 
-RUN pnpm --filter ...db exec prisma generate || pnpm exec prisma generate
+RUN cd packages/db && pnpm exec prisma generate
 
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter web build
