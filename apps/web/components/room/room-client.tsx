@@ -281,6 +281,12 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
               <span className="text-xs tabular-nums text-cream/60">{listeners.toLocaleString()} listening live</span>
             </div>
             <ShareButton />
+            <Link
+              href={`/creator/${creatorId}`}
+              className="hidden rounded-full bg-white/5 px-4 py-2 text-xs text-cream/60 backdrop-blur-xl transition hover:text-cream sm:block"
+            >
+              Host profile
+            </Link>
             {!authed && (
               <button
                 onClick={() => signIn()}

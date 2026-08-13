@@ -349,6 +349,14 @@ export default function StreamBeatsPage() {
               </span>
             </div>
             <ShareButton url={roomUrl} label="Share room" />
+            {creatorId && (
+              <Link
+                href={`/creator/${creatorId}`}
+                className="hidden rounded-full bg-white/5 px-4 py-2 text-xs text-cream/60 backdrop-blur-xl transition hover:text-cream sm:block"
+              >
+                Profile
+              </Link>
+            )}
             <Link
               href="/listen"
               className="hidden rounded-full bg-white/5 px-4 py-2 text-xs text-cream/60 backdrop-blur-xl transition hover:text-cream sm:block"
