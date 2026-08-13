@@ -62,6 +62,12 @@ const config: Config = {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
+        // StreamBeats listening-room palette
+        cream: '#f8f4ec',
+        ember: '#ff8a3d',
+        amberwarm: '#ffb86b',
+        teal: '#2ec4b6',
+        ink: '#0b1020',
       },
       boxShadow: {
         soft: '0 2px 8px -2px rgba(0,0,0,0.2), 0 4px 16px -4px rgba(0,0,0,0.15)',

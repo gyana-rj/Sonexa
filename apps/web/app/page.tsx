@@ -1,13 +1,10 @@
 'use client';
 
-import { PlayerProvider } from '@/lib/player-context';
-import { Redirect } from '@/components/redirect';
 import { Navbar } from '@/components/landing/navbar';
 import { Hero } from '@/components/landing/hero';
 import {
   TrendingSection,
   MoodSection,
-  ArtistsSection,
   TimelineSection,
   FeaturesSection,
   DevicesSection,
@@ -16,8 +13,7 @@ import {
 
 export default function LandingPage() {
   return (
-    <PlayerProvider>
-      <Redirect />
+    <>
       <div
         className="relative w-full bg-[#160f1f] text-white"
         style={{ fontFamily: 'Inter, sans-serif', scrollBehavior: 'smooth' }}
@@ -38,13 +34,12 @@ export default function LandingPage() {
             <TrendingSection />
             <DevicesSection />
             <MoodSection />
-            <ArtistsSection />
             <TimelineSection />
             <FeaturesSection />
             <Footer />
           </div>
         </div>
       </div>
-    </PlayerProvider>
+    </>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { motion } from "framer-motion";
+import Link from 'next/link';
+import { motion } from 'framer-motion';
 import {
   Play,
   Mic2,
@@ -12,8 +13,8 @@ import {
   Search,
   Bookmark,
   Disc3,
-} from "lucide-react";
-import { Reveal, SectionHeading } from "./reveal";
+} from 'lucide-react';
+import { Reveal, SectionHeading } from './reveal';
 import {
   ChillArt,
   FocusArt,
@@ -21,59 +22,54 @@ import {
   RomanceArt,
   PartyArt,
   TravelArt,
-} from "./mood-art";
+} from './mood-art';
+import { moodPlaylists, trendingTracks } from '@/lib/landing-music';
 
-const shell = "relative w-full px-6 py-28 sm:px-10";
+const shell = 'relative w-full px-6 py-28 sm:px-10';
 
 /* ------------------------------------------------------------------ */
 /* SECTION 1 — Trending Music                                          */
 /* ------------------------------------------------------------------ */
 
-const trending = [
-  { title: "Monsoon Letters", artist: "Aarav Sen", from: "#c0392b", to: "#7a2320", plays: "12.4M" },
-  { title: "Golden Hour", artist: "Meera & The Alleys", from: "#d3663a", to: "#a83f2a", plays: "9.8M" },
-  { title: "Bazaar Nights", artist: "Kabir Roy", from: "#2f5d47", to: "#173a3a", plays: "8.1M" },
-  { title: "Rooftop Ragas", artist: "Naina", from: "#7a3a5e", to: "#c8613a", plays: "7.6M" },
-  { title: "Chai & Vinyl", artist: "The Alley Cats", from: "#e6913f", to: "#a83f2a", plays: "6.9M" },
-  { title: "Midnight Local", artist: "Dev Iyer", from: "#2a1f4a", to: "#7a2320", plays: "5.5M" },
-  { title: "Saffron Skies", artist: "Ila", from: "#c8613a", to: "#7a3a5e", plays: "4.7M" },
-];
+function AlbumCard({ a }: { a: (typeof trendingTracks)[number] }) {
+  const href = `/listen?q=${encodeURIComponent(a.searchQuery)}`;
 
-function AlbumCard({ a }: { a: (typeof trending)[number] }) {
   return (
-    <motion.div
-      whileHover={{ y: -10 }}
-      className="group w-56 shrink-0 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur-md transition-colors hover:border-white/20"
-    >
-      <div
-        className="relative mb-3 aspect-square w-full overflow-hidden rounded-xl"
-        style={{ background: `linear-gradient(135deg, ${a.from}, ${a.to})` }}
+    <Link href={href} className="block shrink-0">
+      <motion.div
+        whileHover={{ y: -10 }}
+        className="group w-56 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur-md transition-colors hover:border-white/20"
       >
-        <div className="absolute inset-0 flex items-center justify-center opacity-70">
-          <div className="h-16 w-16 rounded-full border-4 border-black/30 bg-black/40">
-            <div className="mx-auto mt-6 h-4 w-4 rounded-full bg-amber-200/70" />
-          </div>
-        </div>
-        <motion.div
-          initial={false}
-          className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 backdrop-blur-sm transition-opacity duration-300 group-hover:opacity-100"
+        <div
+          className="relative mb-3 aspect-square w-full overflow-hidden rounded-xl"
+          style={{ background: `linear-gradient(135deg, ${a.from}, ${a.to})` }}
         >
-          <motion.span
-            whileHover={{ scale: 1.1 }}
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-red-600 shadow-xl"
+          <div className="absolute inset-0 flex items-center justify-center opacity-70">
+            <div className="h-16 w-16 rounded-full border-4 border-black/30 bg-black/40">
+              <div className="mx-auto mt-6 h-4 w-4 rounded-full bg-amber-200/70" />
+            </div>
+          </div>
+          <motion.div
+            initial={false}
+            className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 backdrop-blur-sm transition-opacity duration-300 group-hover:opacity-100"
           >
-            <Play className="ml-0.5 h-6 w-6 fill-white text-white" />
-          </motion.span>
-        </motion.div>
-      </div>
-      <p className="truncate text-white" style={{ fontFamily: "Fraunces, serif" }}>
-        {a.title}
-      </p>
-      <div className="flex items-center justify-between">
-        <p className="truncate text-sm text-white/55">{a.artist}</p>
-        <span className="shrink-0 text-xs text-amber-200/70">{a.plays}</span>
-      </div>
-    </motion.div>
+            <motion.span
+              whileHover={{ scale: 1.1 }}
+              className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-red-600 shadow-xl"
+            >
+              <Play className="ml-0.5 h-6 w-6 fill-white text-white" />
+            </motion.span>
+          </motion.div>
+        </div>
+        <p className="truncate text-white" style={{ fontFamily: 'Fraunces, serif' }}>
+          {a.title}
+        </p>
+        <div className="flex items-center justify-between">
+          <p className="truncate text-sm text-white/55">{a.artist}</p>
+          <span className="shrink-0 text-xs text-amber-200/70">{a.plays}</span>
+        </div>
+      </motion.div>
+    </Link>
   );
 }
 
@@ -88,7 +84,7 @@ export function TrendingSection() {
       />
       <Reveal>
         <div className="mx-auto flex max-w-7xl gap-5 overflow-x-auto pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {trending.map((a) => (
+          {trendingTracks.map((a) => (
             <AlbumCard key={a.title} a={a} />
           ))}
         </div>
@@ -101,14 +97,14 @@ export function TrendingSection() {
 /* SECTION 2 — Discover by Mood                                        */
 /* ------------------------------------------------------------------ */
 
-const moods = [
-  { name: "Chill", Art: ChillArt, tag: "Unwind & drift" },
-  { name: "Focus", Art: FocusArt, tag: "Deep work flow" },
-  { name: "Workout", Art: WorkoutArt, tag: "Full energy" },
-  { name: "Romance", Art: RomanceArt, tag: "Golden feelings" },
-  { name: "Party", Art: PartyArt, tag: "Turn it up" },
-  { name: "Travel", Art: TravelArt, tag: "Open roads" },
-];
+const moodArt = {
+  Chill: ChillArt,
+  Focus: FocusArt,
+  Workout: WorkoutArt,
+  Romance: RomanceArt,
+  Party: PartyArt,
+  Travel: TravelArt,
+} as const;
 
 export function MoodSection() {
   return (
@@ -120,120 +116,51 @@ export function MoodSection() {
         subtitle="Hand-illustrated worlds for every moment of your day."
       />
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {moods.map((m, i) => (
-          <Reveal key={m.name} delay={i * 0.06}>
-            <motion.div
-              whileHover={{ y: -8, scale: 1.02 }}
-              className="group relative h-60 overflow-hidden rounded-3xl border border-white/10"
-            >
-              <motion.div
-                className="absolute inset-0"
-                whileHover={{ scale: 1.08 }}
-                transition={{ duration: 0.6 }}
-              >
-                <m.Art />
-              </motion.div>
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-              <div className="absolute inset-0 flex flex-col justify-end p-6">
-                <h3
-                  className="text-3xl text-white"
-                  style={{ fontFamily: "Fraunces, serif", fontWeight: 600 }}
+        {moodPlaylists.map((m, i) => {
+          const Art = moodArt[m.name as keyof typeof moodArt];
+          const href = `/listen?mood=${encodeURIComponent(m.id)}`;
+          return (
+            <Reveal key={m.id} delay={i * 0.06}>
+              <Link href={href} className="block">
+                <motion.div
+                  whileHover={{ y: -8, scale: 1.02 }}
+                  className="group relative h-60 overflow-hidden rounded-3xl border border-white/10"
                 >
-                  {m.name}
-                </h3>
-                <p className="text-sm text-white/70">{m.tag}</p>
-              </div>
-              <span className="absolute right-5 top-5 flex h-11 w-11 translate-y-2 items-center justify-center rounded-full bg-white/15 opacity-0 backdrop-blur transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
-                <Play className="ml-0.5 h-5 w-5 fill-white text-white" />
-              </span>
-            </motion.div>
-          </Reveal>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* SECTION 3 — Featured Artists (with parallax)                        */
-/* ------------------------------------------------------------------ */
-
-const artists = [
-  { name: "Meera Kapoor", listeners: "4.2M", track: "Golden Hour", from: "#c8613a", to: "#7a3a5e" },
-  { name: "Aarav Sen", listeners: "3.8M", track: "Monsoon Letters", from: "#2f5d47", to: "#173a3a" },
-  { name: "Naina Rao", listeners: "2.9M", track: "Rooftop Ragas", from: "#c0392b", to: "#7a2320" },
-];
-
-export function ArtistsSection() {
-  return (
-    <section className={`${shell} overflow-hidden`}>
-      {/* slow-floating ambient glows */}
-      <motion.div
-        animate={{ y: [0, -50, 0] }}
-        transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-        className="pointer-events-none absolute -left-20 top-10 h-80 w-80 rounded-full bg-orange-600/20 blur-[120px]"
-      />
-      <motion.div
-        animate={{ y: [0, 50, 0] }}
-        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
-        className="pointer-events-none absolute -right-20 bottom-10 h-80 w-80 rounded-full bg-rose-700/20 blur-[120px]"
-      />
-      <SectionHeading
-        eyebrow="Voices of the city"
-        title="Featured"
-        accent="Artists"
-        subtitle="The storytellers behind this month's most-loved sound."
-      />
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 md:grid-cols-3">
-        {artists.map((ar, i) => (
-          <Reveal key={ar.name} delay={i * 0.1}>
-            <motion.div
-              whileHover={{ y: -10 }}
-              className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-md"
-            >
-              <div className="mb-5 flex items-center gap-4">
-                <div
-                  className="flex h-20 w-20 items-center justify-center rounded-full border-2 border-white/15"
-                  style={{ background: `linear-gradient(135deg, ${ar.from}, ${ar.to})` }}
-                >
-                  <span
-                    className="text-2xl text-white"
-                    style={{ fontFamily: "Fraunces, serif" }}
+                  <motion.div
+                    className="absolute inset-0"
+                    whileHover={{ scale: 1.08 }}
+                    transition={{ duration: 0.6 }}
                   >
-                    {ar.name.charAt(0)}
+                    <Art />
+                  </motion.div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+                  <div className="absolute inset-0 flex flex-col justify-end p-6">
+                    <h3
+                      className="text-3xl text-white"
+                      style={{ fontFamily: 'Fraunces, serif', fontWeight: 600 }}
+                    >
+                      {m.name}
+                    </h3>
+                    <p className="text-sm text-white/70">{m.tag}</p>
+                    <p className="mt-1 text-xs text-amber-200/60">
+                      {m.tracks.length} tracks · tap to play playlist
+                    </p>
+                  </div>
+                  <span className="absolute right-5 top-5 flex h-11 w-11 translate-y-2 items-center justify-center rounded-full bg-white/15 opacity-0 backdrop-blur transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+                    <Play className="ml-0.5 h-5 w-5 fill-white text-white" />
                   </span>
-                </div>
-                <div>
-                  <h3 className="text-xl text-white" style={{ fontFamily: "Fraunces, serif" }}>
-                    {ar.name}
-                  </h3>
-                  <p className="flex items-center gap-1.5 text-sm text-white/55">
-                    <Headphones className="h-4 w-4" /> {ar.listeners} monthly listeners
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center justify-between rounded-xl bg-black/20 px-4 py-3">
-                <div>
-                  <p className="text-xs text-amber-200/70">Popular track</p>
-                  <p className="text-white">{ar.track}</p>
-                </div>
-                <motion.span
-                  whileHover={{ scale: 1.12 }}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-red-600"
-                >
-                  <Play className="ml-0.5 h-5 w-5 fill-white text-white" />
-                </motion.span>
-              </div>
-            </motion.div>
-          </Reveal>
-        ))}
+                </motion.div>
+              </Link>
+            </Reveal>
+          );
+        })}
       </div>
     </section>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* SECTION 4 — Music Journey Timeline                                  */
+/* SECTION 3 — Music Journey Timeline                                  */
 /* ------------------------------------------------------------------ */
 
 const journey = [
@@ -410,8 +337,6 @@ function LaptopMock({ delay }: { delay: number }) {
               <Disc3 className="h-5 w-5" /> Sonexa
             </span>
             <div className="flex gap-3 text-xs text-white/50">
-              <span>Discover</span>
-              <span>Artists</span>
               <span>Radio</span>
             </div>
           </div>

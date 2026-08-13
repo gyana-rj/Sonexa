@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useRouter } from 'next/navigation';
 import { Play, ArrowRight } from 'lucide-react';
 import { signIn, useSession } from 'next-auth/react';
 import { HeroIllustration } from './hero-illustration';
@@ -13,6 +14,7 @@ import { LightRays, Particles, BackgroundWaveform } from './ambient-effects';
 export function Hero() {
   const [mouse, setMouse] = useState({ x: 0, y: 0 });
   const session = useSession();
+  const router = useRouter();
   const isSignedIn = !!session.data?.user;
 
   useEffect(() => {
@@ -103,21 +105,15 @@ export function Hero() {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.96 }}
-              onClick={() => (isSignedIn ? undefined : signIn())}
+              onClick={() =>
+                isSignedIn ? router.push('/listen') : signIn(undefined, { callbackUrl: '/' })
+              }
               className="group flex items-center gap-2 rounded-full bg-gradient-to-br from-orange-400 to-red-600 px-7 py-3.5 text-white shadow-xl shadow-orange-900/40"
             >
               <Play className="h-5 w-5 fill-current" />
-              {isSignedIn ? 'Welcome back' : 'Start Listening'}
+              {isSignedIn ? 'Open Sonexa' : 'Start Listening'}
             </motion.button>
-            <motion.a
-              href="#trending"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.96 }}
-              className="group flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-7 py-3.5 text-white backdrop-blur-md transition-colors hover:bg-white/15"
-            >
-              Explore Music
-              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-            </motion.a>
+            
           </motion.div>
         </div>
       </div>
