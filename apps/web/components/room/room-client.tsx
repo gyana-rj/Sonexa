@@ -1,18 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
 import { signIn, useSession } from 'next-auth/react';
 import Backdrop from '@/components/dashboard/backdrop';
-import { YouTubePlayer } from '@/components/dashboard/youtube-player';
+import { YouTubePlayer, type YouTubePlayerHandle } from '@/components/dashboard/youtube-player';
 import { ShareButton } from '@/components/room/share-button';
 import { fmt, makeCover, parseUrl, splitTitle, type QueueItem, type Source } from '@/lib/music';
 import { deriveRoomView, type RoomStream } from '@/lib/room-state';
+import { positionFromSnapshot, shouldResync, type PlaybackSnapshot } from '@/lib/room-sync';
 import type { StreamPreview } from '@/app/api/streams/preview/route';
 
 const DEFAULT_DURATION = 210;
-const POLL_MS = 3000;
+const POLL_MS = 1500;
 
 // Shape returned by GET /api/streams?creatorId=…
 type ApiStream = {
@@ -78,7 +79,9 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
 
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
+  /** Room intent from the server — never overwritten by local YouTube events. */
   const [playing, setPlaying] = useState(false);
+  const [needsUnlock, setNeedsUnlock] = useState(false);
   const [listeners, setListeners] = useState(0);
 
   const [input, setInput] = useState('');
@@ -86,6 +89,31 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
+
+  const playerRef = useRef<YouTubePlayerHandle>(null);
+  const elapsedRef = useRef(0);
+  const applyingRemoteRef = useRef(false);
+  const localControlUntilRef = useRef(0);
+
+  const applyPlayback = useCallback((playback: PlaybackSnapshot | null | undefined) => {
+    if (!playback?.streamId) return;
+    // Don't let a stale poll undo a click the user just made.
+    if (Date.now() < localControlUntilRef.current) return;
+    const nextPlaying = Boolean(playback.playing);
+    setPlaying(nextPlaying);
+    const target = positionFromSnapshot(playback);
+    if (shouldResync(elapsedRef.current, target) || applyingRemoteRef.current) {
+      playerRef.current?.seekTo(target);
+      setElapsed(target);
+      elapsedRef.current = target;
+    }
+    if (nextPlaying) {
+      applyingRemoteRef.current = true;
+      setTimeout(() => {
+        applyingRemoteRef.current = false;
+      }, 800);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -108,18 +136,16 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
 
       setNowPlaying(np);
       setQueue(mapped.filter((m) => m.id !== np?.id).sort((a, b) => b.votes - a.votes));
-      if (data.playback?.streamId) {
-        setPlaying(Boolean(data.playback.playing));
-      }
+      applyPlayback(data.playback ?? null);
     } catch {
       setNowPlaying(null);
       setQueue([]);
     } finally {
       setLoading(false);
     }
-  }, [creatorId]);
+  }, [creatorId, applyPlayback]);
 
-  // Initial load + periodic refresh so peers' votes, skips, and additions stay in sync.
+  // Initial load + periodic refresh so peers' votes, skips, and play/pause stay in sync.
   useEffect(() => {
     load();
     const id = setInterval(load, POLL_MS);
@@ -156,7 +182,9 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
     let active = true;
     const ping = async () => {
       try {
-        const res = await fetch('/api/presence', { method: 'POST' });
+        const res = await fetch(`/api/presence?creatorId=${encodeURIComponent(creatorId)}`, {
+          method: 'POST',
+        });
         if (!res.ok) return;
         const data = (await res.json()) as { count: number };
         if (active) setListeners(data.count ?? 0);
@@ -170,7 +198,51 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
       active = false;
       clearInterval(id);
     };
-  }, [authed]);
+  }, [authed, creatorId]);
+
+  // Anonymous guests can still read the room presence count.
+  useEffect(() => {
+    if (authed) return;
+    let active = true;
+    const ping = async () => {
+      try {
+        const res = await fetch(`/api/presence?creatorId=${encodeURIComponent(creatorId)}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { count: number };
+        if (active) setListeners(data.count ?? 0);
+      } catch {
+        /* ignore */
+      }
+    };
+    ping();
+    const id = setInterval(ping, 10_000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [authed, creatorId]);
+
+  async function publishPlayback(next: {
+    streamId: string;
+    playing: boolean;
+    positionSec: number;
+  }) {
+    try {
+      await fetch('/api/streams/playback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          creatorId,
+          action: 'set',
+          streamId: next.streamId,
+          playing: next.playing,
+          positionSec: next.positionSec,
+        }),
+      });
+    } catch {
+      /* next poll reconciles */
+    }
+  }
 
   async function advance() {
     try {
@@ -181,29 +253,42 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
       });
     } finally {
       setElapsed(0);
+      elapsedRef.current = 0;
       setDuration(0);
+      setNeedsUnlock(false);
       await load();
     }
   }
 
   async function togglePlay() {
-    const next = !playing;
-    setPlaying(next);
     if (!nowPlaying) return;
-    try {
-      await fetch('/api/streams/playback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          creatorId,
-          action: 'set',
-          streamId: nowPlaying.id,
-          playing: next,
-        }),
-      });
-    } catch {
-      /* local UI already flipped; next poll will reconcile */
+    const next = !playing;
+    localControlUntilRef.current = Date.now() + 2000;
+    setPlaying(next);
+    setNeedsUnlock(false);
+    if (next && nowPlaying.youtubeId) {
+      playerRef.current?.play(nowPlaying.youtubeId);
+      playerRef.current?.seekTo(elapsedRef.current);
     }
+    await publishPlayback({
+      streamId: nowPlaying.id,
+      playing: next,
+      positionSec: elapsedRef.current,
+    });
+  }
+
+  function unlockAudio() {
+    if (!nowPlaying?.youtubeId) return;
+    localControlUntilRef.current = Date.now() + 2000;
+    setNeedsUnlock(false);
+    setPlaying(true);
+    playerRef.current?.play(nowPlaying.youtubeId);
+    playerRef.current?.seekTo(elapsedRef.current);
+    void publishPlayback({
+      streamId: nowPlaying.id,
+      playing: true,
+      positionSec: elapsedRef.current,
+    });
   }
 
   async function addToQueue() {
@@ -255,6 +340,7 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
 
   const dur = nowPlaying?.duration || DEFAULT_DURATION;
   const progress = duration ? Math.min(100, (elapsed / duration) * 100) : 0;
+  const showUnlock = Boolean(playing && needsUnlock && nowPlaying?.youtubeId);
 
   return (
     <div className="relative min-h-screen w-full bg-[#0b1020]">
@@ -375,6 +461,22 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
                     <Icon path="M18 5v14M4 5l9 7-9 7z" />
                   </button>
                 </div>
+
+                {showUnlock && (
+                  <button
+                    type="button"
+                    onClick={unlockAudio}
+                    className="mt-6 w-full max-w-[460px] rounded-2xl bg-gradient-to-r from-[#ff8a3d] to-[#ffb86b] px-4 py-3.5 text-sm font-medium text-[#0b1020] shadow-[0_14px_45px_rgba(255,138,61,0.38)] transition hover:brightness-105 lg:mx-0"
+                  >
+                    Tap to join the music
+                  </button>
+                )}
+
+                {!nowPlaying.youtubeId && (
+                  <p className="mt-4 text-sm text-cream/45">
+                    This track isn’t playable yet — try a YouTube link or re-add the Spotify track.
+                  </p>
+                )}
               </div>
             </div>
           ) : (
@@ -393,14 +495,22 @@ export function RoomClient({ creatorId }: { creatorId: string }) {
 
           {/* Real audio playback */}
           <YouTubePlayer
+            ref={playerRef}
             videoId={nowPlaying?.youtubeId ?? null}
             playing={playing}
             onProgress={(cur, d) => {
+              elapsedRef.current = cur;
               setElapsed(cur);
               if (d > 0) setDuration(d);
+              if (playing && cur > 0.3) setNeedsUnlock(false);
             }}
             onEnded={advance}
-            onPlayingChange={setPlaying}
+            onPlayingChange={(isPlaying) => {
+              if (isPlaying) setNeedsUnlock(false);
+            }}
+            onAutoplayBlocked={() => {
+              if (playing && elapsedRef.current < 0.3) setNeedsUnlock(true);
+            }}
           />
         </section>
 

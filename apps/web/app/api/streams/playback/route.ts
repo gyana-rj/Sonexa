@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { prismaClient } from '@repo/db/client';
 import { getPlayback, setPlayback } from '@/lib/playback-store';
 import { advancePlayback, type RoomStream } from '@/lib/room-state';
@@ -11,25 +9,23 @@ const bodySchema = z.object({
   /** Set an explicit track, or omit when using `action: "advance"`. */
   streamId: z.string().optional().nullable(),
   playing: z.boolean().optional(),
+  /** Current media position in seconds (for cross-client clock sync). */
+  positionSec: z.number().finite().nonnegative().optional(),
   action: z.enum(['set', 'advance']).default('set'),
 });
 
 /**
  * POST /api/streams/playback
- * Host (or any signed-in listener) updates the room's shared now-playing pointer.
+ * Anyone in the room can update the shared now-playing pointer (play/pause/skip).
+ * Auth is optional so shared-link guests stay in lockstep with the host.
  */
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
-    return NextResponse.json({ message: 'Unauthenticated' }, { status: 403 });
-  }
-
   const parsed = bodySchema.safeParse(await req.json());
   if (!parsed.success) {
     return NextResponse.json({ message: 'Invalid body' }, { status: 400 });
   }
 
-  const { creatorId, streamId, playing, action } = parsed.data;
+  const { creatorId, streamId, playing, positionSec, action } = parsed.data;
 
   const room = await prismaClient.user.findFirst({
     where: { id: creatorId },
@@ -55,7 +51,10 @@ export async function POST(req: NextRequest) {
       streamId: current.streamId,
       playing: current.playing,
     });
-    const stored = setPlayback(creatorId, next);
+    const stored = setPlayback(creatorId, {
+      ...next,
+      positionSec: 0,
+    });
     return NextResponse.json({ playback: stored });
   }
 
@@ -72,6 +71,7 @@ export async function POST(req: NextRequest) {
   const stored = setPlayback(creatorId, {
     streamId: streamId ?? null,
     playing: playing ?? Boolean(streamId),
+    positionSec,
   });
 
   return NextResponse.json({ playback: stored });
@@ -83,5 +83,6 @@ export async function GET(req: NextRequest) {
   if (!creatorId) {
     return NextResponse.json({ message: 'creatorId required' }, { status: 400 });
   }
-  return NextResponse.json({ playback: getPlayback(creatorId) });
+  const playback = getPlayback(creatorId);
+  return NextResponse.json({ playback });
 }

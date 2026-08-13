@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { prismaClient } from "@repo/db/client";
 import { spotifyOEmbed, youtubeIdForQuery } from "@/lib/resolve";
 import { getPlayback, setPlayback } from "@/lib/playback-store";
+import { healSpotifyStreams } from "@/lib/heal-spotify";
 import { deriveRoomView, type RoomStream } from "@/lib/room-state";
 
 const YT_REGEX = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
@@ -131,6 +132,9 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // Same heal as /api/streams/my — guests must get playable YouTube ids too.
+  await healSpotifyStreams(streams);
+
   const mapped = streams.map(({ _count, upvote, ...rest }) => ({
     ...rest,
     upvote: _count.upvote,
@@ -160,6 +164,8 @@ export async function GET(req: NextRequest) {
     playback: {
       streamId: playback.streamId,
       playing: playback.playing,
+      positionSec: playback.positionSec,
+      updatedAt: playback.updatedAt,
     },
   });
 }

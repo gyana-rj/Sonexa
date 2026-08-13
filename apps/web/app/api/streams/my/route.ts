@@ -1,8 +1,8 @@
 import { prismaClient } from "@repo/db/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { spotifyOEmbed, youtubeIdForQuery } from "@/lib/resolve";
 import { getPlayback, setPlayback } from "@/lib/playback-store";
+import { healSpotifyStreams } from "@/lib/heal-spotify";
 import { deriveRoomView, type RoomStream } from "@/lib/room-state";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -47,34 +47,7 @@ export async function GET(req: NextRequest){
         }
     })
 
-    // Heal legacy Spotify rows: older tracks stored the raw 22-char Spotify id
-    // (not playable) and a placeholder title. Resolve them to a real title, cover,
-    // and playable YouTube id once, then persist so this only runs a single time.
-    await Promise.all(
-        streams.map(async (s) => {
-            if (s.type !== "Spotify" || s.extractedId.length === 11) return;
-            const meta = await spotifyOEmbed(s.url);
-            const title = meta?.title ?? s.title;
-            const youtubeId = await youtubeIdForQuery(title);
-            if (!youtubeId) return;
-            await prismaClient.stream.update({
-                where: { id: s.id },
-                data: {
-                    extractedId: youtubeId,
-                    title,
-                    smallImg: meta?.thumbnail ?? s.smallImg,
-                    bigImg: meta?.thumbnail ?? s.bigImg,
-                },
-            });
-            // Reflect the update in the response we're about to send.
-            s.extractedId = youtubeId;
-            s.title = title;
-            if (meta?.thumbnail) {
-                s.smallImg = meta.thumbnail;
-                s.bigImg = meta.thumbnail;
-            }
-        }),
-    );
+    await healSpotifyStreams(streams);
 
     const mapped = streams.map(({_count, upvote, ...rest}) => ({
         ...rest,
@@ -105,6 +78,8 @@ export async function GET(req: NextRequest){
         playback: {
             streamId: playback.streamId,
             playing: playback.playing,
+            positionSec: playback.positionSec,
+            updatedAt: playback.updatedAt,
         },
     })
 }

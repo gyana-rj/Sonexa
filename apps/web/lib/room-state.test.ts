@@ -147,6 +147,33 @@ describe('multi-user room sync', () => {
     expect(getPlayback('room-b').playing).toBe(false);
   });
 
+  it('shared play/pause + position keep host and guest clocks aligned', () => {
+    setPlayback('room-sync', {
+      streamId: 'now',
+      playing: true,
+      positionSec: 30,
+    });
+    const snap = getPlayback('room-sync');
+    expect(snap.playing).toBe(true);
+    expect(snap.positionSec).toBe(30);
+
+    // Pause freezes the clock for every client reading the same snapshot.
+    setPlayback('room-sync', {
+      streamId: 'now',
+      playing: false,
+      positionSec: 42,
+    });
+    const paused = getPlayback('room-sync');
+    expect(paused.playing).toBe(false);
+    expect(paused.positionSec).toBe(42);
+
+    const streams = [track('now', 'Charka', 1), track('q1', 'Next', 0)];
+    const { host, guest } = viewsForClients(streams, paused);
+    expect(host.playing).toBe(false);
+    expect(guest.playing).toBe(false);
+    expect(host.nowPlaying?.id).toBe(guest.nowPlaying?.id);
+  });
+
   it('idempotent votes do not inflate counts when the same user syncs twice', () => {
     let streams = [track('q1', 'Song', 0, false)];
     streams = applyVote(streams, 'q1', true);

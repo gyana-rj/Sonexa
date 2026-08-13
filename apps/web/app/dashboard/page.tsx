@@ -1,18 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
 import { signIn, signOut, useSession } from 'next-auth/react';
 import Backdrop from '@/components/dashboard/backdrop';
-import { YouTubePlayer } from '@/components/dashboard/youtube-player';
+import { YouTubePlayer, type YouTubePlayerHandle } from '@/components/dashboard/youtube-player';
 import { ShareButton } from '@/components/room/share-button';
 import { fmt, makeCover, parseUrl, splitTitle, type QueueItem, type Source } from '@/lib/music';
 import { deriveRoomView, type RoomStream } from '@/lib/room-state';
+import { positionFromSnapshot, shouldResync, type PlaybackSnapshot } from '@/lib/room-sync';
 import type { StreamPreview } from '@/app/api/streams/preview/route';
 
 const DEFAULT_DURATION = 210; // fallback when a track's real length is unknown
-const POLL_MS = 3000;
+const POLL_MS = 1500;
 
 // Shape returned by GET /api/streams/my
 type ApiStream = {
@@ -72,7 +73,9 @@ export default function StreamBeatsPage() {
   const [progress, setProgress] = useState(0); // 0–100, driven by the real player
   const [elapsed, setElapsed] = useState(0); // seconds played
   const [duration, setDuration] = useState(0); // real track length in seconds
+  /** Room intent from the server — never overwritten by local YouTube events. */
   const [playing, setPlaying] = useState(false);
+  const [needsUnlock, setNeedsUnlock] = useState(false);
   // Real count of listeners currently live in the room (0 until first heartbeat).
   const [listeners, setListeners] = useState(0);
   // Shareable link to this creator's room, built from their own id.
@@ -84,6 +87,47 @@ export default function StreamBeatsPage() {
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
+
+  const playerRef = useRef<YouTubePlayerHandle>(null);
+  const elapsedRef = useRef(0);
+  const localControlUntilRef = useRef(0);
+  const playingIntentRef = useRef(false);
+  const listenersRef = useRef(0);
+  const lastRemoteUpdatedAtRef = useRef(0);
+  const pendingPublishRef = useRef<{
+    streamId: string;
+    playing: boolean;
+    positionSec: number;
+  } | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  const applyPlayback = useCallback((playback: PlaybackSnapshot | null | undefined) => {
+    if (!playback?.streamId) return;
+
+    const remoteAt = typeof playback.updatedAt === 'number' ? playback.updatedAt : 0;
+    // Ignore stale snapshots older than our last applied remote (or local click).
+    if (remoteAt > 0 && remoteAt < lastRemoteUpdatedAtRef.current) return;
+    if (Date.now() < localControlUntilRef.current) return;
+    if (pendingPublishRef.current) return;
+
+    const nextPlaying = Boolean(playback.playing);
+
+    // Alone in the room: never let a stale/reset store kill an active play.
+    if (!nextPlaying && playingIntentRef.current && listenersRef.current <= 1) {
+      return;
+    }
+
+    if (remoteAt > 0) lastRemoteUpdatedAtRef.current = remoteAt;
+    playingIntentRef.current = nextPlaying;
+    setPlaying(nextPlaying);
+
+    const target = positionFromSnapshot(playback);
+    if (shouldResync(elapsedRef.current, target)) {
+      playerRef.current?.seekTo(target);
+      setElapsed(target);
+      elapsedRef.current = target;
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -106,16 +150,14 @@ export default function StreamBeatsPage() {
 
       setNowPlaying(np);
       setQueue(mapped.filter((m) => m.id !== np?.id).sort((a, b) => b.votes - a.votes));
-      if (data.playback?.streamId) {
-        setPlaying(Boolean(data.playback.playing));
-      }
+      applyPlayback(data.playback ?? null);
     } catch {
       setNowPlaying(null);
       setQueue([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyPlayback]);
 
   // Initial load once authenticated + keep polling so guest votes/skips sync in.
   useEffect(() => {
@@ -158,30 +200,9 @@ export default function StreamBeatsPage() {
   useEffect(() => {
     setProgress(0);
     setElapsed(0);
+    elapsedRef.current = 0;
     setDuration(0);
   }, [nowPlaying?.id]);
-
-  // Real presence: heartbeat to the server and read back how many listeners are live.
-  useEffect(() => {
-    if (status !== 'authenticated') return;
-    let active = true;
-    const ping = async () => {
-      try {
-        const res = await fetch('/api/presence', { method: 'POST' });
-        if (!res.ok) return;
-        const data = (await res.json()) as { count: number };
-        if (active) setListeners(data.count ?? 0);
-      } catch {
-        /* keep the last known count on a transient failure */
-      }
-    };
-    ping();
-    const id = setInterval(ping, 10_000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [status]);
 
   // Resolve this creator's id once, to build their shareable room link.
   useEffect(() => {
@@ -205,8 +226,85 @@ export default function StreamBeatsPage() {
     };
   }, [status]);
 
+  // Flush a play/pause that happened before /api/me resolved creatorId.
+  useEffect(() => {
+    if (!creatorId || !pendingPublishRef.current) return;
+    const pending = pendingPublishRef.current;
+    pendingPublishRef.current = null;
+    void fetch('/api/streams/playback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        creatorId,
+        action: 'set',
+        streamId: pending.streamId,
+        playing: pending.playing,
+        positionSec: pending.positionSec,
+      }),
+    }).catch(() => {
+      /* next poll reconciles */
+    });
+  }, [creatorId]);
+
+  // Real presence: heartbeat keyed to this creator's room.
+  useEffect(() => {
+    if (status !== 'authenticated' || !creatorId) return;
+    let active = true;
+    const ping = async () => {
+      try {
+        const res = await fetch(`/api/presence?creatorId=${encodeURIComponent(creatorId)}`, {
+          method: 'POST',
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { count: number };
+        if (active) {
+          listenersRef.current = data.count ?? 0;
+          setListeners(data.count ?? 0);
+        }
+      } catch {
+        /* keep the last known count on a transient failure */
+      }
+    };
+    ping();
+    const id = setInterval(ping, 10_000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [status, creatorId]);
+
+  async function publishPlayback(next: {
+    streamId: string;
+    playing: boolean;
+    positionSec: number;
+  }) {
+    if (!creatorId) return;
+    try {
+      const res = await fetch('/api/streams/playback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          creatorId,
+          action: 'set',
+          streamId: next.streamId,
+          playing: next.playing,
+          positionSec: next.positionSec,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { playback?: PlaybackSnapshot };
+        if (data.playback?.updatedAt) {
+          lastRemoteUpdatedAtRef.current = data.playback.updatedAt;
+        }
+      }
+    } catch {
+      /* next poll reconciles */
+    }
+  }
+
   async function advance() {
     if (!creatorId) return;
+    playingIntentRef.current = true;
     try {
       await fetch('/api/streams/playback', {
         method: 'POST',
@@ -216,31 +314,79 @@ export default function StreamBeatsPage() {
     } finally {
       setProgress(0);
       setElapsed(0);
+      elapsedRef.current = 0;
       setDuration(0);
+      setNeedsUnlock(false);
       await load();
     }
   }
 
   async function togglePlay() {
-    if (!creatorId || !nowPlaying) {
+    if (!nowPlaying) {
       setPlaying((p) => !p);
       return;
     }
     const next = !playing;
+    playingIntentRef.current = next;
+    localControlUntilRef.current = Date.now() + 4000;
     setPlaying(next);
+    setNeedsUnlock(false);
+    if (next && nowPlaying.youtubeId) {
+      playerRef.current?.play(nowPlaying.youtubeId);
+      playerRef.current?.seekTo(elapsedRef.current);
+    }
+    const payload = {
+      streamId: nowPlaying.id,
+      playing: next,
+      positionSec: elapsedRef.current,
+    };
+    if (!creatorId) {
+      pendingPublishRef.current = payload;
+      return;
+    }
+    await publishPlayback(payload);
+  }
+
+  function unlockAudio() {
+    if (!nowPlaying?.youtubeId || !creatorId) return;
+    playingIntentRef.current = true;
+    localControlUntilRef.current = Date.now() + 4000;
+    setNeedsUnlock(false);
+    setPlaying(true);
+    playerRef.current?.play(nowPlaying.youtubeId);
+    playerRef.current?.seekTo(elapsedRef.current);
+    void publishPlayback({
+      streamId: nowPlaying.id,
+      playing: true,
+      positionSec: elapsedRef.current,
+    });
+  }
+
+  async function clearAllSongs() {
+    if (listeners > 1 || clearing) return;
+    const ok = window.confirm(
+      'Remove every song from your room? This is only available when nobody else is listening.',
+    );
+    if (!ok) return;
+    setClearing(true);
     try {
-      await fetch('/api/streams/playback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          creatorId,
-          action: 'set',
-          streamId: nowPlaying.id,
-          playing: next,
-        }),
-      });
-    } catch {
-      /* next poll reconciles */
+      const res = await fetch('/api/streams/clear', { method: 'DELETE' });
+      if (res.ok) {
+        playingIntentRef.current = false;
+        setPlaying(false);
+        setNowPlaying(null);
+        setQueue([]);
+        setElapsed(0);
+        elapsedRef.current = 0;
+        setDuration(0);
+        setProgress(0);
+      } else {
+        const data = (await res.json().catch(() => null)) as { message?: string } | null;
+        window.alert(data?.message ?? 'Could not clear the room.');
+      }
+    } finally {
+      setClearing(false);
+      await load();
     }
   }
 
@@ -285,6 +431,7 @@ export default function StreamBeatsPage() {
   }
 
   const dur = (nowPlaying?.duration || DEFAULT_DURATION);
+  const showUnlock = Boolean(playing && needsUnlock && nowPlaying?.youtubeId);
 
   // ---- Auth gates ----
   if (status === 'loading') {
@@ -306,13 +453,13 @@ export default function StreamBeatsPage() {
           </div>
           <h1 className="mt-6 font-display text-3xl font-light text-cream">The Listening Room</h1>
           <p className="mt-3 text-sm text-cream/50">
-            Sign in to open your room — queue tracks and let the crowd vote on what plays next.
+            Sign in to open Creator space — host a shared room, or keep listening privately from Search.
           </p>
           <button
             onClick={() => signIn()}
             className="mt-8 w-full rounded-2xl bg-gradient-to-r from-[#ff8a3d] to-[#ffb86b] px-4 py-4 text-sm font-medium text-[#0b1020] shadow-[0_14px_45px_rgba(255,138,61,0.38)] transition hover:brightness-105"
           >
-            Sign in to continue
+            Sign in to Creator space
           </button>
           <Link href="/listen" className="mt-4 inline-block text-xs text-cream/40 transition hover:text-cream/70">
             or just search &amp; listen →
@@ -452,6 +599,16 @@ export default function StreamBeatsPage() {
                     <Icon path="M18 5v14M4 5l9 7-9 7z" />
                   </button>
                 </div>
+
+                {showUnlock && (
+                  <button
+                    type="button"
+                    onClick={unlockAudio}
+                    className="mt-6 w-full max-w-[460px] rounded-2xl bg-gradient-to-r from-[#ff8a3d] to-[#ffb86b] px-4 py-3.5 text-sm font-medium text-[#0b1020] shadow-[0_14px_45px_rgba(255,138,61,0.38)] transition hover:brightness-105 lg:mx-0"
+                  >
+                    Tap to join the music
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -466,17 +623,26 @@ export default function StreamBeatsPage() {
 
           {/* Real audio playback — an off-screen YouTube player driven by room state. */}
           <YouTubePlayer
+            ref={playerRef}
             videoId={nowPlaying?.youtubeId ?? null}
             playing={playing}
             onProgress={(cur, d) => {
+              elapsedRef.current = cur;
               setElapsed(cur);
               if (d > 0) {
                 setDuration(d);
                 setProgress((cur / d) * 100);
               }
+              // Progress means audio really started — never show a false unlock gate.
+              if (playing && cur > 0.3) setNeedsUnlock(false);
             }}
             onEnded={advance}
-            onPlayingChange={setPlaying}
+            onPlayingChange={(isPlaying) => {
+              if (isPlaying) setNeedsUnlock(false);
+            }}
+            onAutoplayBlocked={() => {
+              if (playing && elapsedRef.current < 0.3) setNeedsUnlock(true);
+            }}
           />
         </section>
 
@@ -579,19 +745,31 @@ export default function StreamBeatsPage() {
 
         {/* SECTION 3 — UP NEXT */}
         <section className="mx-auto mt-28 max-w-3xl">
-          <div className="flex items-baseline justify-between">
+          <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.4em] text-[#ffb86b]">Up Next</p>
               <h2 className="mt-4 font-display text-4xl font-light text-cream">The queue</h2>
             </div>
-            <motion.span
-              key={queue.length}
-              initial={{ scale: 1.35, color: '#ff8a3d' }}
-              animate={{ scale: 1, color: 'rgba(248,244,236,0.4)' }}
-              className="text-sm tabular-nums"
-            >
-              {queue.length} songs
-            </motion.span>
+            <div className="flex items-center gap-3">
+              {(nowPlaying || queue.length > 0) && listeners <= 1 && (
+                <button
+                  type="button"
+                  onClick={() => void clearAllSongs()}
+                  disabled={clearing}
+                  className="rounded-full bg-white/5 px-4 py-2 text-xs text-cream/55 backdrop-blur-xl transition hover:bg-white/10 hover:text-cream disabled:opacity-40"
+                >
+                  {clearing ? 'Clearing…' : 'Remove all songs'}
+                </button>
+              )}
+              <motion.span
+                key={queue.length}
+                initial={{ scale: 1.35, color: '#ff8a3d' }}
+                animate={{ scale: 1, color: 'rgba(248,244,236,0.4)' }}
+                className="text-sm tabular-nums"
+              >
+                {queue.length} songs
+              </motion.span>
+            </div>
           </div>
 
           <div className="mt-8 space-y-3">

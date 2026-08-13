@@ -89,14 +89,22 @@ export const YouTubePlayer = forwardRef<
     playing: boolean;
     onProgress?: (current: number, duration: number) => void;
     onEnded?: () => void;
+    /** Fires when the iframe reports PLAYING / PAUSED. Do not treat as room authority. */
     onPlayingChange?: (playing: boolean) => void;
+    /** Browser blocked unmuted autoplay — parent should show a tap-to-listen gate. */
+    onAutoplayBlocked?: () => void;
   }
->(function YouTubePlayer({ videoId, playing, onProgress, onEnded, onPlayingChange }, ref) {
+>(function YouTubePlayer(
+  { videoId, playing, onProgress, onEnded, onPlayingChange, onAutoplayBlocked },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const readyRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
   const autoplayWatch = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** True once YouTube reports PLAYING for the current videoId. */
+  const everPlayedRef = useRef(false);
   // Avoid SSR/client hydration mismatches — this player is browser-only.
   const [mounted, setMounted] = useState(false);
 
@@ -106,8 +114,8 @@ export const YouTubePlayer = forwardRef<
   videoIdRef.current = videoId;
   playingRef.current = playing;
 
-  const cb = useRef({ onProgress, onEnded, onPlayingChange });
-  cb.current = { onProgress, onEnded, onPlayingChange };
+  const cb = useRef({ onProgress, onEnded, onPlayingChange, onAutoplayBlocked });
+  cb.current = { onProgress, onEnded, onPlayingChange, onAutoplayBlocked };
 
   useEffect(() => {
     setMounted(true);
@@ -116,12 +124,14 @@ export const YouTubePlayer = forwardRef<
   const watchAutoplay = () => {
     if (autoplayWatch.current) clearTimeout(autoplayWatch.current);
     autoplayWatch.current = setTimeout(() => {
-      if (!playingRef.current) return;
+      if (!playingRef.current || everPlayedRef.current) return;
       const cur = playerRef.current;
       if (!cur || typeof cur.getCurrentTime !== 'function') return;
-      // Still no media clock → browser likely blocked unmuted autoplay.
-      if ((cur.getCurrentTime() || 0) < 0.25 && (cur.getDuration() || 0) === 0) {
-        cb.current.onPlayingChange?.(false);
+      // Only treat as blocked when media never actually started.
+      const t = cur.getCurrentTime() || 0;
+      const d = typeof cur.getDuration === 'function' ? cur.getDuration() || 0 : 0;
+      if (t < 0.2 && d === 0) {
+        cb.current.onAutoplayBlocked?.();
       }
     }, 2000);
   };
@@ -129,6 +139,7 @@ export const YouTubePlayer = forwardRef<
   const loadAndPlay = (id: string) => {
     const p = playerRef.current;
     if (!p || !readyRef.current || !isValidVideoId(id)) return;
+    if (activeIdRef.current !== id) everPlayedRef.current = false;
     activeIdRef.current = id;
     p.loadVideoById(id);
     watchAutoplay();
@@ -192,6 +203,17 @@ export const YouTubePlayer = forwardRef<
       playingRef.current = true;
       if (!isValidVideoId(video)) return;
       if (!playerRef.current || !readyRef.current) return;
+      // Same video: resume without reloading (reload was resetting playback to 0
+      // and racing autoplay checks). New id: load then play.
+      if (activeIdRef.current === video && everPlayedRef.current) {
+        try {
+          playerRef.current.playVideo();
+        } catch {
+          /* ignore */
+        }
+        watchAutoplay();
+        return;
+      }
       loadAndPlay(video);
     },
   }));
@@ -220,8 +242,8 @@ export const YouTubePlayer = forwardRef<
         playerVars: Record<string, string | number>;
         events: Record<string, (e?: { data: number }) => void>;
       } = {
-        width: '320',
-        height: '180',
+        width: '160',
+        height: '90',
         playerVars: {
           autoplay: 0,
           controls: 0,
@@ -242,10 +264,15 @@ export const YouTubePlayer = forwardRef<
             const YT = window.YT!;
             if (e.data === YT.PlayerState.ENDED) cb.current.onEnded?.();
             if (e.data === YT.PlayerState.PLAYING) {
+              everPlayedRef.current = true;
               if (autoplayWatch.current) clearTimeout(autoplayWatch.current);
               cb.current.onPlayingChange?.(true);
             }
-            if (e.data === YT.PlayerState.PAUSED) cb.current.onPlayingChange?.(false);
+            // Ignore PAUSED while we still intend to play — buffering / brief
+            // YouTube blips must not look like a user pause to parents.
+            if (e.data === YT.PlayerState.PAUSED && !playingRef.current) {
+              cb.current.onPlayingChange?.(false);
+            }
           },
         },
       };
@@ -284,35 +311,56 @@ export const YouTubePlayer = forwardRef<
   const prevVideoId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!readyRef.current || !playerRef.current) return;
-
     if (videoId !== prevVideoId.current) {
+      everPlayedRef.current = false;
       prevVideoId.current = videoId;
+      if (!readyRef.current || !playerRef.current) return;
       syncPlayback();
       return;
     }
 
+    if (!readyRef.current || !playerRef.current) return;
     const p = playerRef.current;
     if (!isValidVideoId(videoId)) return;
     try {
-      if (playing) p.playVideo();
-      else p.pauseVideo();
+      if (playing) {
+        p.playVideo();
+        watchAutoplay();
+      } else {
+        p.pauseVideo();
+      }
     } catch {
       /* ignore */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId, playing]);
 
+  // If the browser quietly pauses a "background-looking" embed, nudge play while
+  // the parent still wants audio.
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => {
+      if (!playingRef.current || !readyRef.current || !playerRef.current) return;
+      try {
+        playerRef.current.playVideo();
+      } catch {
+        /* ignore */
+      }
+    }, 4000);
+    return () => clearInterval(id);
+  }, [playing]);
+
   if (!mounted) return null;
 
-  // Keep a tiny player in the real viewport — browsers often refuse autoplay
-  // for iframes parked at -9999px / opacity 0.
+  // Must stay visibly in the viewport — browsers pause near-invisible /
+  // off-screen unmuted media after a few seconds.
   return (
     <div
-      className="pointer-events-none fixed bottom-0 left-0 z-[-1] h-px w-px overflow-hidden opacity-[0.01]"
+      className="fixed bottom-3 left-3 z-30 overflow-hidden rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.55)] ring-1 ring-white/15"
+      style={{ width: 160, height: 90 }}
       aria-hidden
     >
-      <div ref={containerRef} />
+      <div ref={containerRef} className="h-full w-full" />
     </div>
   );
 });

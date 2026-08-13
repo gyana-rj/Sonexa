@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import type { SearchResult } from '@/app/api/search/route';
 import { getMoodPlaylist } from '@/lib/landing-music';
+import { readCreatorSpacePref, writeCreatorSpacePref } from '@/lib/room-sync';
 import { Backdrop } from './backdrop';
 import { YouTubePlayer, type YouTubePlayerHandle } from '@/components/dashboard/youtube-player';
 
@@ -60,16 +61,40 @@ export function ListenClient({
   const [queue, setQueue] = useState<SearchResult[]>([]);
   const [playlistLabel, setPlaylistLabel] = useState<string | null>(null);
 
-  // playback state, driven by the real YouTube player
   const [playing, setPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [spaceChoice, setSpaceChoice] = useState<'pending' | 'listen' | 'creator' | 'hidden'>(
+    'pending',
+  );
 
   const abortRef = useRef<AbortController | null>(null);
   const playerRef = useRef<YouTubePlayerHandle>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const autoPlayQueryRef = useRef(initialQuery?.trim() || null);
   const moodLoadedRef = useRef(false);
+
+  useEffect(() => {
+    const pref = readCreatorSpacePref();
+    if (pref === 'creator') {
+      setSpaceChoice('creator');
+      return;
+    }
+    if (pref === 'listen') {
+      setSpaceChoice('hidden');
+      return;
+    }
+    setSpaceChoice('pending');
+  }, []);
+
+  function chooseSpace(choice: 'listen' | 'creator') {
+    writeCreatorSpacePref(choice);
+    if (choice === 'creator') {
+      window.location.href = '/dashboard';
+      return;
+    }
+    setSpaceChoice('hidden');
+  }
 
   /* --- open/close the search overlay --- */
   const openSearch = useCallback(() => setSearchOpen(true), []);
@@ -294,9 +319,11 @@ export function ListenClient({
             </button>
             <Link
               href="/dashboard"
-              className="hidden items-center gap-1.5 rounded-full bg-white/5 px-4 py-2 text-xs text-cream/70 backdrop-blur-xl transition hover:bg-white/10 hover:text-cream sm:flex"
+              onClick={() => writeCreatorSpacePref('creator')}
+              className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-2 text-xs text-cream/70 backdrop-blur-xl transition hover:bg-white/10 hover:text-cream sm:px-4"
             >
-              <Radio className="h-4 w-4" /> Creator space
+              <Radio className="h-4 w-4" />
+              <span className="hidden sm:inline">Creator space</span>
             </Link>
             <div className="flex items-center gap-2 rounded-full bg-white/5 py-1 pl-1 pr-3 backdrop-blur-xl">
               {userImage ? (
@@ -321,6 +348,34 @@ export function ListenClient({
             </button>
           </div>
         </header>
+
+        {spaceChoice === 'pending' && (
+          <div className="mt-8 rounded-[1.75rem] bg-white/[0.045] p-6 ring-1 ring-white/10 backdrop-blur-2xl sm:p-8">
+            <p className="text-xs uppercase tracking-[0.32em] text-amberwarm">Choose your space</p>
+            <h2 className="mt-3 font-display text-3xl font-light text-cream">How do you want to listen?</h2>
+            <p className="mt-2 max-w-xl text-sm text-cream/50">
+              Stay here for personal search &amp; play, or open Creator space to host a shared room others can join.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => chooseSpace('listen')}
+                className="rounded-2xl bg-white/[0.06] px-5 py-4 text-left transition hover:bg-white/[0.1] ring-1 ring-white/10"
+              >
+                <p className="font-medium text-cream">Just listen</p>
+                <p className="mt-1 text-sm text-cream/45">Search and play on your own.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => chooseSpace('creator')}
+                className="rounded-2xl bg-gradient-to-r from-ember/90 to-amberwarm/90 px-5 py-4 text-left text-ink transition hover:brightness-105"
+              >
+                <p className="font-medium">Use Creator space</p>
+                <p className="mt-1 text-sm text-ink/70">Host a room, share a link, sync play/pause.</p>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* SECTION 1 — NOW PLAYING */}
         <section className="mt-14 lg:mt-20">
