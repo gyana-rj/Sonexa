@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Proxies every request to the Render service and serves the maintenance page
 // when Render is suspended, unreachable or too slow to answer.
@@ -98,7 +99,7 @@ function maintenance(request) {
       { status: 503, headers: { "cache-control": "no-store", "retry-after": RETRY_AFTER_SECONDS } },
     );
   }
-  maintenanceHtml ??= readFileSync(join(process.cwd(), "maintenance.html"), "utf8");
+  maintenanceHtml ??= loadMaintenanceHtml();
   return new Response(request.method === "HEAD" ? null : maintenanceHtml, {
     status: 503,
     headers: {
@@ -107,4 +108,31 @@ function maintenance(request) {
       "retry-after": RETRY_AFTER_SECONDS,
     },
   });
+}
+
+// Vercel keeps the repo layout inside the function bundle when the project's
+// root directory is a subfolder of a monorepo (the handler runs from
+// /var/task/infra/maintenance-gateway/api while process.cwd() is /var/task),
+// so resolve the page relative to this file first and only then from cwd.
+const MAINTENANCE_HTML_PATHS = [
+  fileURLToPath(new URL("../maintenance.html", import.meta.url)),
+  join(process.cwd(), "maintenance.html"),
+];
+
+const FALLBACK_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="60"><title>Sonexa is under maintenance</title></head>
+<body style="font-family:system-ui,sans-serif;text-align:center;padding:4rem 1rem">
+<h1>Sonexa is under maintenance</h1><p>We'll be back shortly. This page refreshes every minute.</p>
+</body></html>`;
+
+function loadMaintenanceHtml() {
+  for (const path of MAINTENANCE_HTML_PATHS) {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      // Try the next location.
+    }
+  }
+  return FALLBACK_HTML;
 }
