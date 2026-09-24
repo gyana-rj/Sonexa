@@ -43,3 +43,9 @@ DNS stays at GoDaddy; only a CNAME record for `staging-sonexa` is needed.
 - Logs: Vercel dashboard → project → Logs.
 - Limitation: Vercel functions can't proxy WebSockets. Sonexa doesn't use them
   today; if it starts to, those connections must go straight to Render.
+- Caching: only `/_next/static/*` (content-hashed build files) is cached at
+  Vercel's edge. Everything else is marked `no-store` for Vercel's cache so
+  outages always show the maintenance page.
+- Usage: every other request is one function call. An open dashboard or room
+  polls every 1.5s (~2,400 calls/hour per tab), so check Vercel → Usage if
+  rooms stay open for long periods.

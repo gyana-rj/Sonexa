@@ -57,6 +57,15 @@ export async function handle(request) {
   const responseHeaders = new Headers(upstream.headers);
   for (const name of DROP_RESPONSE_HEADERS) responseHeaders.delete(name);
 
+  // Only Next's content-hashed build assets may live in Vercel's edge cache.
+  // Pages and API responses must always reach Render, otherwise cached pages
+  // keep showing during an outage instead of the maintenance page.
+  const immutableAsset = target.pathname.startsWith("/_next/static/") && upstream.ok;
+  responseHeaders.set(
+    "vercel-cdn-cache-control",
+    immutableAsset ? "public, max-age=31536000, immutable" : "no-store",
+  );
+
   // Keep users on the custom domain when Render issues absolute redirects.
   const location = upstream.headers.get("location");
   if (location) {
